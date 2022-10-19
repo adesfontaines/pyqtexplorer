@@ -1,20 +1,26 @@
-from datetime import datetime
-import locale
+from copy import copy
 import shutil
-from tkinter import BOTH, messagebox
-import tkinter as tk
-from tkinter import *
-from os import listdir, startfile
 from pathlib import Path
-from os.path import isfile, isdir, join, getmtime, getsize
+from os.path import isfile, isdir, join
 import subprocess, os, platform
-from tkinter.ttk import Treeview
-from PyQt5.QtWidgets import QApplication, QAbstractItemView, QLineEdit, QSplitter, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,QToolButton, QMenu, QWidget, QAction,QMessageBox, QDirModel, QFileSystemModel, QTreeView, QListView, QGridLayout
-from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt,QDir, QVariant
+from PyQt5.QtWidgets import QApplication, QStyle, QAbstractItemView, QLineEdit, QTableView, QSplitter, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,QToolButton, QMenu, QWidget, QAction,QMessageBox, QDirModel, QFileSystemModel, QTreeView, QListView, QGridLayout, QFrame, QLabel, QDialogButtonBox, QDialog
+from PyQt5.QtGui import QIcon, QCursor
+from PyQt5.QtCore import Qt,QDir, QVariant, QSize, QModelIndex
 import sys
 
-    
+class AboutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("About")
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Close)
+        self.buttonBox.accepted.connect(self.accept)
+        self.layout = QVBoxLayout()
+        message = QLabel("Made by Antonin Desfontaines.")
+        self.layout.addWidget(message)
+        self.layout.addWidget(self.buttonBox)
+        self.setLayout(self.layout)
+
 class App(QMainWindow):
 
     def __init__(self, initialDir):
@@ -22,25 +28,20 @@ class App(QMainWindow):
         
         # Variables
         self.currentDir = initialDir
-        self.showFileExtensions = 1
-
+        self.history = {}
+        self.mainExplorer = None
         # App init
         self.initUI()
-
     def initUI(self):
-        # Top menu
-        self.createTopMenu()
-        self.toolbar = self.addToolBar("actionToolBar")
-        self.toolbar.setMovable(False)
-
         # Status bar
         self.statusBar()
-        self.createActionBar()
-
+        
+        # Dir model
         dirModel = QFileSystemModel()
         dirModel.setFilter(QDir.Dirs | QDir.NoDotAndDotDot)
         dirModel.setRootPath(QDir.rootPath())
 
+        # Side explorer
         self.sideExplorer = QTreeView()
         self.sideExplorer.setModel(dirModel)
         self.sideExplorer.hideColumn(3)
@@ -48,28 +49,37 @@ class App(QMainWindow):
         self.sideExplorer.hideColumn(1)
         self.sideExplorer.header().hide()
         self.sideExplorer.clicked.connect(self.navigate)
+        self.sideExplorer.setFrameStyle(QFrame.NoFrame)
         self.sideExplorer.uniformRowHeights = True
 
         self.mainModel = QFileSystemModel()
         self.mainModel.setRootPath(QDir.rootPath())
         self.mainModel.setReadOnly(False)
+        self.mainModel.directoryLoaded.connect(self.updateStatus)
+        # Main explorer
+        self.changeView("Details")
         
-        self.mainExplorer = QListView()
-        self.mainExplorer.setModel(self.mainModel)
-        self.mainExplorer.setRootIndex(self.mainModel.setRootPath(QDir.homePath()))
-        self.mainExplorer.doubleClicked.connect(self.navigate)
-        self.mainExplorer.uniformItemSizes = True
+        # Set layout and views
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        
         explorerLayout = QHBoxLayout()
+        explorerLayout.setContentsMargins(0, 0, 0, 0)
 
         layout.addLayout(explorerLayout)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.sideExplorer)
-        splitter.addWidget(self.mainExplorer)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([200, 300])
-        explorerLayout.addWidget(splitter)
+        self.explorerSplitter = QSplitter(Qt.Horizontal)
+        self.explorerSplitter.addWidget(self.sideExplorer)
+        self.explorerSplitter.addWidget(self.mainExplorer)
+
+        self.explorerSplitter.setStretchFactor(1, 2)
+        self.explorerSplitter.setSizes([400, 800])
+        explorerLayout.addWidget(self.explorerSplitter)
+
+        # Top menus
+        self.createTopMenu()
+        self.createActionBar()
+
 
         # Main widget
         widget = QWidget()
@@ -77,49 +87,36 @@ class App(QMainWindow):
         self.setCentralWidget(widget)
 
 
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.contextItemMenu) 
-
+        # self.setContextMenuPolicy(Qt.CustomContextMenu)
+        # self.customContextMenuRequested.connect(self.contextItemMenu) 
+        self.setWindowIcon(QIcon('./src/ico/application-sidebar.png'))
         self.setLayout(layout)
         self.setGeometry(800,600,600,560)
         self.navigate(self.mainModel.setRootPath(QDir.homePath()))
         self.show()
-
-    def donothing():
-        x = 0
-
-    def about(self):
-        window = Toplevel(self)
-        window.title("About pyTExplorer");
-        window.resizable(width=False, height=False);
-        window.geometry('250x400')
-        newlabel = Label(window, text = "Made by Antonin Desfontaines")
-        newlabel.pack()
+    def about(self, event):
+        dlg = AboutDialog(self)
+        if dlg.exec():
+            print("Success!")
+        else:
+            print("Cancel!")
     def createActionBar(self):
+        
+        self.toolbar = self.addToolBar("actionToolBar")
+        self.toolbar.setMovable(False)
+        self.toolbar.setFloatable(False)
+
         self._navigateBackButton = QToolButton()                                     
-        self._navigateBackButton.setCheckable(True)                                  
-        self._navigateBackButton.setChecked(False)                                   
-        self._navigateBackButton.setArrowType(Qt.LeftArrow)
-        self._navigateBackButton.setAutoRaise(True)
-        #self._navigateBackButton.setIcon(QIcon("test.jpg"))
+        self._navigateBackButton.setIcon(QIcon("./src/ico/arrow-180.png"))
         self._navigateBackButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
         # self._navigateBackButton.clicked.connect(self.showDetail)
 
         self._navigateForwardButton = QToolButton()                                     
-        self._navigateForwardButton.setCheckable(True)                                  
-        self._navigateForwardButton.setChecked(False)                                   
-        self._navigateForwardButton.setArrowType(Qt.RightArrow)
-        self._navigateForwardButton.setAutoRaise(True)
-        #self._navigateForwardButton.setIcon(QIcon("test.jpg"))
+        self._navigateForwardButton.setIcon(QIcon("./src/ico/arrow.png"))
         self._navigateForwardButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        # self._navigateForwardButton.clicked.connect(self.showDetail)
 
-        self._navigateUpButton = QToolButton()                                     
-        self._navigateUpButton.setCheckable(True)                                  
-        self._navigateUpButton.setChecked(False)                                   
-        self._navigateUpButton.setArrowType(Qt.UpArrow)
-        self._navigateUpButton.setAutoRaise(True)
-        #self._navigateUpButton.setIcon(QIcon("test.jpg"))
+        self._navigateUpButton = QToolButton()                              
+        self._navigateUpButton.setIcon(QIcon("./src/ico/arrow-090.png"))
         self._navigateUpButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self._navigateUpButton.clicked.connect(self.navigateUp)
 
@@ -130,10 +127,10 @@ class App(QMainWindow):
         splitter.addWidget(self.addressBar)
 
         self.searchField = QLineEdit()
-        self.searchField.setMaxLength(30)
+        self.searchField.setPlaceholderText("Search")
         splitter.addWidget(self.searchField)
 
-        splitter.setStretchFactor(8, 1)
+        splitter.setStretchFactor(10    , 1)
         splitter.setSizes([500, 200])
 
 
@@ -143,31 +140,27 @@ class App(QMainWindow):
         self.toolbar.addWidget(splitter)
         self.toolbar.setStyleSheet("QToolBar { border: 0px }")
 
-    def selectAll(self):
-        self.tree.selection_set(*self.tree.get_children())
-    
+    def selectAll(self, event):
+        self.mainExplorer.selectAll()
     def unselectAll(self):
-        self.tree.selection_set([])
-    
+        self.mainExplorer.selectionModel().clearSelection()
     def navigate(self, index):
         self.currentDir = self.mainModel.fileInfo(index).absoluteFilePath()
         self.mainExplorer.setRootIndex(self.mainModel.setRootPath(self.currentDir))
-        self.setWindowTitle(self.currentDir)
+        self.setWindowTitle(os.path.basename(self.currentDir))
         self.addressBar.setText(self.currentDir)
     def navigateUp(self, event):
         self.currentDir = os.path.dirname(self.currentDir)
         self.navigate(self.mainModel.setRootPath(self.currentDir))
     def navigateFromSideTree(self, selected, unselected):
         print(selected)
-    def createFile(self):
-        x = tk.tkSimpleDialog.askstring
-        return
     def deleteFiles(self, event):
         reply = QMessageBox.question(self, 'Delete', 'Are you sure you sure you want to delete those elements ?',
         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if  reply == QMessageBox.Yes:
-            for file in self.tree.selection():
-                fileName = self.tree.item(file, "values")[0]
+            selectedIndexes = self.mainExplorer.selectionModel().selectedIndexes();
+            for file in selectedIndexes:
+                fileName = self.mainModel.itemData(file)[0]
                 filePath = join(self.currentDir, fileName)
                 if os.path.exists(filePath):
                     try:
@@ -175,26 +168,67 @@ class App(QMainWindow):
                             shutil.rmtree(filePath)
                         elif isfile(filePath):
                             os.remove(filePath) 
-                        self.tree.delete(file)
+                        self.mainModel.remove(file)
                     except OSError:
                         print("failed to delete: " + filePath)
                         pass
                 else:
-                    self.tree.delete(file)
+                    self.mainModel.remove(file)
+    def changeView(self, view):
+        if(view == "List"):
+            if type(self.mainExplorer) is not QListView:
+                self.mainExplorer = QListView()
 
-    def updateStatus(self):
-        status = str(len(self.tree.get_children())) + " elements"
-        if len(self.tree.selection()) > 0:
-            status += " | " + str(len(self.tree.selection())) + " elements selected"
+            self.mainExplorer.setViewMode(QListView.ListMode)
+            self.mainExplorer.setIconSize(QSize(64, 64))
+        elif(view == "Icons"):
+            if type(self.mainExplorer) is not QListView:
+                self.mainExplorer = QListView()
+
+            self.mainExplorer.setViewMode(QListView.IconMode)
+            self.mainExplorer.setWordWrap(True)
+            self.mainExplorer.setIconSize(QSize(64, 80))
+            # self.mainExplorer.setGridSize(QSize(150, 150));
+            self.mainExplorer.setUniformItemSizes(True)
+        elif(view == "Details"):
+            self.mainExplorer = QTableView()
+            self.mainExplorer.setSelectionBehavior(QAbstractItemView.SelectRows)
+            self.mainExplorer.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+            self.mainExplorer.verticalHeader().hide()
+            self.mainExplorer.setShowGrid(False)
+            self.mainExplorer.horizontalHeader().setSectionsMovable(True)
+            self.mainExplorer.horizontalHeader().setHighlightSections(False)
+            self.mainExplorer.setFrameStyle(QFrame.NoFrame)
+            self.mainExplorer.setSortingEnabled(True)
+            self.mainExplorer.setEditTriggers(QAbstractItemView.EditKeyPressed)
+
+        # Common
+        self.mainExplorer.doubleClicked.connect(self.onDoubleClick)
+        self.mainExplorer.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.mainExplorer.customContextMenuRequested.connect(self.contextItemMenu)
+        self.mainExplorer.setModel(self.mainModel)
+
+        if hasattr(self, "explorerSplitter"):
+            self.explorerSplitter.replaceWidget(1, self.mainExplorer)
+            self.mainExplorer.setRootIndex(self.mainModel.setRootPath(self.currentDir))
+
+
+    def updateStatus(self, path):
+        status = str(self.mainModel.rowCount(self.mainModel.index(path))) + " elements"
+        selectedCount = len(self.mainExplorer.selectionModel().selectedIndexes())
+        if selectedCount > 0:      
+            status += " | " + str(selectedCount) + " elements selected"
         
         self.statusBar().showMessage(status)
+    def onKeyPress(self, key):
+        if key.key() == Qt.Key_Delete:
+            self.deleteFiles(None)
     def onDoubleClick(self, event):
-        item = self.tree.identify('item',event.x,event.y)
-        itemName = self.tree.item(item, "values")[0]
-        itemPath = join(self.currentDir, itemName);
+        itemPath = self.mainModel.fileInfo(event)
+
         if isdir(itemPath):
-            print("you clicked on", itemName)
-            self.navigate(join(self.currentDir, itemName))
+            self.navigate(event)
         elif isfile(itemPath):
             if platform.system() == 'Darwin':       # macOS
                 subprocess.call(('open', itemPath))
@@ -202,14 +236,57 @@ class App(QMainWindow):
                 os.startfile(itemPath)
             else:                                   # linux variants
                 subprocess.call(('xdg-open', itemPath))
-    def contextItemMenu(self, position): ################### Code for custom menu, this is the default for a QUIT menu
-        menu = QMenu()
-        newAction = menu.addAction("New")
-        quitAction = menu.addAction("Quit")
-        action = menu.exec_(self.mapToGlobal(position))
-        if action == quitAction:
-            sys.exit(app.exec_())
+    def contextItemMenu(self, position):
+        index = self.mainExplorer.indexAt(position)
+        if (index.isValid()):
+            menu = QMenu()
+            cutAction = menu.addAction("Cut")
+            cutAction.triggered.connect(self.cutFiles)
 
+            deleteAction = menu.addAction("Delete")
+            deleteAction.triggered.connect(self.deleteFiles)
+            
+            renameAction = menu.addAction("Rename")
+            renameAction.triggered.connect(self.renameFile)
+
+            copyAction = menu.addAction("Copy")
+            copyAction.triggered.connect(self.copyFiles)
+            menu.addSeparator()
+            # menu.addSeparator()
+            # menu.addAction("Properties")
+            action = menu.exec_(QCursor.pos())
+        else:
+            menu = QMenu()
+            menu.addAction("Refresh")
+            menu.addSeparator()
+            pasteAction = menu.addAction("Paste")
+            pasteAction.triggered.connect(self.pasteFiles)
+
+            action = menu.exec_(QCursor.pos())
+    def cutFiles(self, event):
+        self.selectedFiles = self.mainExplorer.selectionModel().selectedIndexes()
+    def copyFiles(self, event):
+        self.selectedFiles = self.mainExplorer.selectionModel().selectedIndexes()
+    def pasteFiles(self, event):
+        for file in self.selectedFiles:
+            fileName = self.mainModel.itemData(file)[0]
+            filePath = join(self.currentDir, fileName)
+            if os.path.exists(filePath):
+                try:
+                    shutil.copy(filePath, self.currentDir)
+                    # self.mainModel.remove(file)
+                except OSError:
+                    print("failed to copy: " + filePath)
+                    pass
+            else:
+                self.mainModel.remove(file)
+    def renameFile(self, event):
+        selectedIndexes = self.mainExplorer.selectionModel().selectedIndexes();
+        for file in selectedIndexes:
+            fileName = self.mainModel.itemData(file)[0]
+            filePath = join(self.currentDir, fileName)
+            if os.path.exists(filePath):
+                self.mainExplorer.edit(file)
     def createTopMenu(self):
         # Add menus
         menuBar = self.menuBar()
@@ -231,7 +308,7 @@ class App(QMainWindow):
         fileMenu.addAction(newAction)
         fileMenu.addSeparator()
         fileMenu.addAction(exitAction)
-
+ 
         # Edit
         cutAction = QAction('&Cut', self)        
         # cutAction.setShortcut('Ctrl+X')
@@ -243,16 +320,44 @@ class App(QMainWindow):
         pasteAction = QAction('&Paste', self)        
         pasteAction.setStatusTip('Paste')
 
+        selectAllAction = QAction('&Select All', self)
+        selectAllAction.setStatusTip('Select All')
+        selectAllAction.triggered.connect(self.selectAll)
+
+        unselectAllAction = QAction('&Unselect All', self)
+        unselectAllAction.setStatusTip('Unselect All')
+        unselectAllAction.triggered.connect(self.unselectAll)
+
         editMenu.addAction(cutAction)
         editMenu.addAction(copyAction)
         editMenu.addAction(pasteAction)
+        editMenu.addSeparator()
+        editMenu.addAction(selectAllAction)
+        editMenu.addAction(unselectAllAction)
+        
+        # View
+        iconsViewAction = QAction('&Icons', self)        
+        iconsViewAction.setStatusTip('Icons')
+        iconsViewAction.triggered.connect(lambda checked: self.changeView("Icons"))
 
+        listViewAction = QAction('&List', self)        
+        listViewAction.setStatusTip('List')
+        listViewAction.triggered.connect(lambda checked: self.changeView("List"))
+
+        detailViewAction = QAction('&Details', self)
+        detailViewAction.setStatusTip('Details')
+        detailViewAction.triggered.connect(lambda checked: self.changeView("Details"))
+
+        viewMenu.addAction(iconsViewAction)
+        viewMenu.addAction(listViewAction)
+        viewMenu.addAction(detailViewAction)
         # About
         aboutAction = QAction('&About', self)
         aboutAction.setStatusTip('About')
+        aboutAction.triggered.connect(self.about)
+
         helpMenu.addAction(aboutAction)
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = App(Path.home())
     sys.exit(app.exec_()) 
-
